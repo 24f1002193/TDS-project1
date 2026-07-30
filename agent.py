@@ -161,14 +161,34 @@ def run_python(code: str) -> dict:
     local_vars: dict = {}
     stdout_buf = io.StringIO()
     error = None
+    _SENTINEL = object()
+    last_expr_value = _SENTINEL
+
     try:
         with _Timeout(TOOL_TIMEOUT_SECONDS):
             with contextlib.redirect_stdout(stdout_buf):
-                exec(code, safe_globals, local_vars)
+                import ast
+
+                tree = ast.parse(code, mode="exec")
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    last_node = tree.body.pop()
+                    exec(compile(tree, "<agent_code>", "exec"), safe_globals, local_vars)
+                    last_expr_value = eval(
+                        compile(ast.Expression(last_node.value), "<agent_code>", "eval"),
+                        safe_globals,
+                        local_vars,
+                    )
+                else:
+                    exec(code, safe_globals, local_vars)
     except Exception as e:  # noqa: BLE001
         error = f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=3)}"
 
-    result = local_vars.get("result", None)
+    if "result" in local_vars:
+        result = local_vars["result"]
+    elif last_expr_value is not _SENTINEL:
+        result = last_expr_value
+    else:
+        result = None
     # Make sure it's JSON-serializable; fall back to str() if not.
     try:
         json.dumps(result, default=str)
