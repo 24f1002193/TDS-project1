@@ -13,6 +13,8 @@ import logging
 import os
 from collections import defaultdict
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -58,8 +60,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     logger.info("chat=%s replying: %s", chat_id, reply_text[:500])
     await message.reply_text(reply_text)
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, format, *args):
+        pass  # silence default request logging, keeps logs clean
+
+
+def _start_health_server():
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    logger.info(f"health server listening on :{port}")
+    server.serve_forever()
 
 def main() -> None:
+    threading.Thread(target=_start_health_server, daemon=True).start()
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("bot starting (polling)...")
